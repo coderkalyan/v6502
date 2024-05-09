@@ -1,46 +1,5 @@
 `default_nettype none
 
-// FLOE: fetch low order byte from instruction stream into effective address
-// FHIE: fetch high order byte from instruction stream into effective address
-// ADXE: add index register x to effective address
-// ADYE: add index register y to effective address
-
-// `define ADDR_STATE_FLO
-// `define ADDR_STATE_`
-// module address_fsm (
-//     input wire i_clk,
-//     input wire i_rst_n,
-//     input wire i_start,             // signals start of fsm logic
-//     input wire [15:0] i_pc,         // current program counter
-//     input wire [7:0] i_data,        // input on data base
-//     output wire [15:0] o_addr,      // output on address bus
-//     output wire o_pc_inc,           // if asserted, increment program counter
-//     output wire o_done,             // asserted when fsm is ready with effective address
-//     output reg [15:0] o_eff_addr    // effective address calculated (only valid when o_done)
-// );
-//     reg [15:0] scratch, next_scratch;
-//     always @(posedge i_clk, negedge i_rst_n) begin
-//         if (!i_rst_n)
-//             scratch <= 16'h0000;
-//         else if (i_start)
-//             scratch <= 16'h0000;
-//         else
-//             scratch <= next_scratch;
-//     end
-//
-//     reg state;
-//     reg pc_inc, done;
-//     always @(*) begin
-//         next_scratch = 16'h0000;
-//         pc_inc = 1'b0;
-//         done = 1'b0;
-//
-//         case (state)
-//             ``
-//         endcase
-//     end
-// endmodule
-
 `define ADDR_MODE_IMM    3'h0    // immediate
 `define ADDR_MODE_ABS    3'h1    // absolute
 `define ADDR_MODE_ZPG    3'h2    // zero page
@@ -61,14 +20,24 @@ module address_fsm (
     input wire i_index_reg,
     input wire i_start,
     output wire o_done,
+    output wire [3:0] o_ctrl
 );
-    reg running;
-    reg [1:0] step, step_done;
+    reg done, running;
+    reg [1:0] step;
+
+    always @(posedge i_clk, negedge i_rst_n) begin
+        if (!i_rst_n)
+            done <= 1'b0;
+        else if (step == step_done)
+            done <= 1'b1;
+        else if (i_start)
+            done <= 1'b0;
+    end
 
     always @(posedge i_clk, negedge i_rst_n) begin
         if (!i_rst_n)
             running <= 1'b0;
-        else if (step == step_done)
+        else if (done)
             running <= 1'b0;
         else if (i_start)
             running <= 1'b1;
@@ -95,6 +64,7 @@ module address_fsm (
         end
     end
 
+    reg [1:0] step_done;
     always @(*) begin
         step_done = 2'bxx;
 
@@ -104,9 +74,60 @@ module address_fsm (
             `ADDR_MODE_ZPG: step_done = 1;
             `ADDR_MODE_ABSI: step_done = 0;
             `ADDR_MODE_ZPGI: step_done = 2;
-            `ADDR_MODE_INDI: step_done = 4;
+            `ADDR_MODE_INDI: step_done = 3;
             `ADDR_MODE_INDA: step_done = 1;
             `ADDR_MODE_INDZ: step_done = 1;
         endcase
     end
+
+    localparam STATE_LDPC = 0; // output program counter on address bus
+    localparam STATE_RDLO = 1; // read immediate into low byte of addr
+    localparam STATE_RDHI = 2; // read immediate into high byte of addr
+
+    // step cycles through states, depending on mode
+    reg [1:0] state;
+    always @(*) begin
+        state = 2'hx;
+        
+        case (mode)
+            `ADDR_MODE_IMM: begin
+                case (step)
+                    0: state = STATE_LDPC;
+                endcase
+            end
+            `ADDR_MODE_ABS: begin
+                case (step)
+                    0: state = STATE_RDLO;
+                    1: state = STATE_RDHI;
+                endcase
+            end
+        endcase
+    end
+
+    reg pc_out, pc_inc, ldlo, ldhi;
+    always @(*) begin
+        pc_out = 0;
+        pc_inc = 0;
+        ldlo = 0;
+        ldhi = 0;
+
+        case (state)
+            STATE_LDPC: begin
+                pc_out = 1;
+            end
+            STATE_RDLO: begin
+                pc_out = 1;
+                pc_inc = 1;
+                ldlo = 1;
+            end
+            STATE_RDHI: begin
+                pc_out = 1;
+                pc_inc = 1;
+                ldhi = 1;
+            end
+        endcase
+    end
+
+    assign o_done = done;
+    assign o_ctrl = {pc_out, pc_inc, ldlo, ldhi};
 endmodule
